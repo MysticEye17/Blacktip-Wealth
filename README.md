@@ -1,34 +1,83 @@
-# DecisionEngine — Cross-Platform Wealth Management App
+# Blacktip Wealth
 
-Positioning: **A personal financial decision engine for young adults.**
+Blacktip Wealth is an Expo React Native app for a personal financial decision engine for young adults.
 
-This is an Expo React Native starter app for iOS and Android. It includes:
+The current app is intentionally Expo Go-friendly: it uses standard Expo/React Native components first so the frontend can be developed quickly before adding native-only features.
 
-- Onboarding / brand screen
-- Detailed profile inputs: age, state, income, expenses, debt, student loans, credit score, height, weight, relationship status, dependents, housing, insurance, risk tolerance
-- Goal planner for short-term and long-term goals
-- Local device saving with AsyncStorage
-- Dashboard with net worth, surplus, monthly allocation, and 10-year projection chart
-- Recommendation engine covering cash, debt, investing, tax basics, insurance, and life planning
-- Optional AI explanation button using a secure backend proxy
-
-## Run it
+## Local Development
 
 ```bash
 npm install
-npx expo start
+npm run start
 ```
 
-Then scan the QR code with Expo Go, or run:
+Scan the QR code with Expo Go, or open the local Expo URL from the Expo Go app.
+
+Useful scripts:
 
 ```bash
-npm run ios
-npm run android
+npm run start:clear
+npm run typecheck
+npm run doctor
 ```
 
-## Important OpenAI security note
+## Current Frontend
 
-Do **not** put an OpenAI API key directly inside this mobile app. Mobile apps can be reverse engineered. Use a backend proxy.
+The main app entry is [App.tsx](./App.tsx). It contains the Blacktip Wealth mobile frontend adapted from the original web React concept:
+
+- branded Blacktip Wealth dashboard
+- client financial inputs
+- financial health scores
+- next-dollar allocation logic
+- AI interpretation placeholder
+- timeline recommendations
+- insurance, relationship, and housing planning cards
+
+## Expo Go vs Development Builds
+
+Use Expo Go while the app only needs JavaScript and Expo Go-supported native libraries.
+
+Switch to development builds when the app needs native behavior that Expo Go cannot provide, such as custom native libraries, push notifications, universal links, store-parity icon/splash testing, or other native configuration.
+
+When switching, install the dev client:
+
+```bash
+npx expo install expo-dev-client
+```
+
+Then create a development build:
+
+```bash
+npm run build:development -- --platform ios
+npm run build:development -- --platform android
+```
+
+## Preview And Production Builds
+
+Internal test builds:
+
+```bash
+npm run build:preview -- --platform ios
+npm run build:preview -- --platform android
+```
+
+Store builds:
+
+```bash
+npm run build:production -- --platform ios
+npm run build:production -- --platform android
+```
+
+Submit after the production binaries are ready:
+
+```bash
+npm run submit -- --platform ios
+npm run submit -- --platform android
+```
+
+## OpenAI Security Note
+
+Do not put an OpenAI API key directly inside the mobile app. Mobile apps can be reverse engineered. Use a backend proxy.
 
 In `app.json`, set:
 
@@ -38,39 +87,12 @@ In `app.json`, set:
 }
 ```
 
-Your backend should receive `{ profile, goals, recommendations }`, call OpenAI, and return:
+The backend should receive `{ "profile": {}, "goals": [], "recommendations": [] }`, call OpenAI, and return:
 
 ```json
 { "explanation": "plain English explanation here" }
 ```
 
-## Next production steps
-
-1. Replace local storage with Supabase or Firebase authentication + database.
-2. Add user accounts and encrypted personal data storage.
-3. Add compliance disclaimers and licensed-professional review.
-4. Add real tax tables, insurance quote integrations, and state-specific rules.
-5. Add backend audit logs for recommendations.
-6. Add subscription payments with RevenueCat or Stripe.
-
 ## Disclaimer
 
 This app is educational planning software only. It is not tax, legal, investment, insurance, or financial advice.
-
-## Optional backend proxy for OpenAI
-
-A simple Express backend is included in `/backend`.
-
-```bash
-cd backend
-npm install
-cp .env.example .env
-# add your OpenAI key to .env
-npm run dev
-```
-
-Then set `openAiProxyUrl` in `app.json` to your deployed endpoint, for example:
-
-```json
-"https://your-backend.com/explain"
-```

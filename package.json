@@ -1,11 +1,17 @@
 {
   "scripts": {
     "start": "expo start --lan",
+    "start:clear": "expo start --lan --clear",
     "start:tunnel": "expo start --tunnel",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "doctor": "npx expo-doctor"
+    "typecheck": "tsc --noEmit",
+    "doctor": "npx expo-doctor",
+    "build:development": "npx eas-cli build --profile development",
+    "build:preview": "npx eas-cli build --profile preview",
+    "build:production": "npx eas-cli build --profile production",
+    "submit": "npx eas-cli submit"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
