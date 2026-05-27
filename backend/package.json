@@ -1,0 +1,1 @@
+{"scripts":{"dev":"node server.js","start":"node server.js"},"dependencies":{"cors":"latest","dotenv":"latest","express":"latest","openai":"latest"},"private":true}
