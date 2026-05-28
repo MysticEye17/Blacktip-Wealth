@@ -1,11 +1,40 @@
 import { ClientProfile, FilingStatus, Goal, PlanningModule, ProjectionPoint, Recommendation } from '../types';
+import { defaultProfile } from './defaultData';
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 export const money = (value: number) => `$${Math.round(value).toLocaleString()}`;
 export const percent = (value: number) => `${Math.round(value)}%`;
+const numeric = (value: number | null | undefined, fallback = 0) => typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+const defaultNumeric = (key: keyof ClientProfile, fallback = 0) => numeric(defaultProfile[key] as number | null | undefined, fallback);
+const profileNumber = (profile: ClientProfile, key: keyof ClientProfile, fallback = 0) => numeric(profile[key] as number | null | undefined, fallback);
+const profileDefaultNumber = (profile: ClientProfile, key: keyof ClientProfile, fallback = 0) => profileNumber(profile, key, defaultNumeric(key, fallback));
+const goalNumber = (goal: Goal, key: keyof Goal, fallback = 0) => numeric(goal[key] as number | null | undefined, fallback);
+const SOCIAL_SECURITY_WAGE_BASE_2026 = 184500;
+const ADDITIONAL_MEDICARE_THRESHOLDS: Record<FilingStatus, number> = {
+  single: 200000,
+  marriedJoint: 250000,
+  headOfHousehold: 200000,
+};
+const LONG_TERM_GAIN_BRACKETS_2026: Record<FilingStatus, { zeroRateCap: number; fifteenRateCap: number }> = {
+  single: { zeroRateCap: 49450, fifteenRateCap: 545500 },
+  marriedJoint: { zeroRateCap: 98900, fifteenRateCap: 613700 },
+  headOfHousehold: { zeroRateCap: 66200, fifteenRateCap: 579600 },
+};
+const IRA_BASE_LIMIT_2026 = 7500;
+const IRA_CATCH_UP_50_PLUS_2026 = 1100;
+const ROTH_IRA_PHASEOUT_2026: Record<FilingStatus, { starts: number; ends: number }> = {
+  single: { starts: 153000, ends: 168000 },
+  marriedJoint: { starts: 242000, ends: 252000 },
+  headOfHousehold: { starts: 153000, ends: 168000 },
+};
+const TRADITIONAL_IRA_ACTIVE_PARTICIPANT_PHASEOUT_2026: Record<FilingStatus, { starts: number; ends: number }> = {
+  single: { starts: 81000, ends: 91000 },
+  marriedJoint: { starts: 129000, ends: 149000 },
+  headOfHousehold: { starts: 81000, ends: 91000 },
+};
 
 export function goalYears(goal: Goal) {
-  if (!goal.targetDate) return Math.max(1 / 12, goal.years || 1);
+  if (!goal.targetDate) return Math.max(1 / 12, goalNumber(goal, 'years', 1));
   const target = new Date(`${goal.targetDate}T00:00:00`);
   const now = new Date();
   const months = Math.max(1, (target.getFullYear() - now.getFullYear()) * 12 + target.getMonth() - now.getMonth());
@@ -28,26 +57,27 @@ function hasAutoCoverage(profile: ClientProfile) {
   return profile.autoInsurance ? profile.autoInsurance !== 'none' : profile.hasAutoInsurance;
 }
 
-export function monthlySurplus(profile: ClientProfile) {
-  return profile.income / 12 - profile.monthlyExpenses - profile.parentSupportMonthly;
-}
-
 export function emergencyFundTarget(profile: ClientProfile) {
-  const months = profile.dependents > 0 || profile.riskTolerance === 'low' ? 6 : 4;
-  return profile.monthlyExpenses * months;
+  const months = profileDefaultNumber(profile, 'dependents') > 0 || profile.riskTolerance === 'low' ? 6 : 4;
+  return profileDefaultNumber(profile, 'monthlyExpenses') * months;
 }
 
 export function netWorth(profile: ClientProfile) {
-  return profile.cashSavings + profile.investments + profile.retirement + profile.carValue - profile.debt - profile.studentLoans - profile.carLoanBalance;
+  const homeEquity = profile.rentOrOwn === 'own' ? Math.max(0, profileNumber(profile, 'homeValue') - profileNumber(profile, 'mortgageBalance')) : 0;
+  return profileNumber(profile, 'cashSavings') + profileNumber(profile, 'investments') + profileNumber(profile, 'retirement') + profileNumber(profile, 'carValue') + homeEquity
+    - profileNumber(profile, 'debt') - profileNumber(profile, 'studentLoans') - profileNumber(profile, 'carLoanBalance');
 }
 
 export function bmi(profile: ClientProfile) {
-  if (!profile.heightInches || !profile.weightLbs) return 0;
-  return (profile.weightLbs / (profile.heightInches * profile.heightInches)) * 703;
+  const heightInches = profileNumber(profile, 'heightInches');
+  const weightLbs = profileNumber(profile, 'weightLbs');
+  if (!heightInches || !weightLbs) return 0;
+  return (weightLbs / (heightInches * heightInches)) * 703;
 }
 
 export function riskAllocation(profile: ClientProfile) {
-  const ageStockRule = clamp(110 - profile.age, 40, 95);
+  const age = profileDefaultNumber(profile, 'age', 30);
+  const ageStockRule = clamp(110 - age, 40, 95);
   const riskAdjustment = profile.riskTolerance === 'high' ? 8 : profile.riskTolerance === 'low' ? -12 : 0;
   const stock = clamp(ageStockRule + riskAdjustment, 35, 95);
   const bonds = clamp(100 - stock - 5, 0, 60);
@@ -57,21 +87,30 @@ export function riskAllocation(profile: ClientProfile) {
 
 export function recommendedMonthlyPlan(profile: ClientProfile) {
   const surplus = Math.max(0, monthlySurplus(profile));
-  const emergencyGap = Math.max(0, emergencyFundTarget(profile) - profile.cashSavings);
-  const debtAggressive = profile.debtRate >= 7;
-  const emergency = emergencyGap > 0 ? surplus * 0.45 : surplus * 0.1;
-  const debt = debtAggressive ? surplus * 0.3 : surplus * 0.15;
-  const retirement = surplus * (profile.age < 30 ? 0.25 : 0.2);
+  const emergencyGap = Math.max(0, emergencyFundTarget(profile) - profileNumber(profile, 'cashSavings'));
+  const debtBalance = profileNumber(profile, 'debt') + profileNumber(profile, 'studentLoans') + profileNumber(profile, 'carLoanBalance');
+  const debtAggressive = profileDefaultNumber(profile, 'debtRate') >= 7;
+  const emergency = emergencyGap > 0 ? Math.min(surplus * 0.45, emergencyGap / 12) : 0;
+  const debt = debtBalance > 0 ? surplus * (debtAggressive ? 0.3 : 0.15) : 0;
+  const retirement = surplus * (profileDefaultNumber(profile, 'age', 30) < 30 ? 0.25 : 0.2);
   const taxable = Math.max(0, surplus - emergency - debt - retirement);
   return { surplus, emergency, debt, retirement, taxable };
 }
 
+function includesPartnerInHousehold(profile: ClientProfile) {
+  return profileNumber(profile, 'partnerIncome') > 0 && (profile.relationshipStatus === 'married' || profile.relationshipStatus === 'engaged' || profile.taxFilingStatus === 'marriedJoint');
+}
+
 export function grossHouseholdIncome(profile: ClientProfile) {
-  return profile.income + (profile.relationshipStatus === 'married' ? profile.partnerIncome : 0);
+  return profileDefaultNumber(profile, 'income') + (includesPartnerInHousehold(profile) ? profileNumber(profile, 'partnerIncome') : 0);
+}
+
+function taxIncomeForFilingStatus(profile: ClientProfile, filingStatus = profile.taxFilingStatus) {
+  return profileDefaultNumber(profile, 'income') + (filingStatus === 'marriedJoint' ? profileNumber(profile, 'partnerIncome') : 0);
 }
 
 export function retirementRate(profile: ClientProfile) {
-  return grossHouseholdIncome(profile) ? profile.currentRetirementContribution / grossHouseholdIncome(profile) : 0;
+  return grossHouseholdIncome(profile) ? profileNumber(profile, 'currentRetirementContribution') / grossHouseholdIncome(profile) : 0;
 }
 
 const ordinaryBrackets: Record<FilingStatus, { cap: number; rate: number }[]> = {
@@ -110,8 +149,13 @@ const standardDeduction: Record<FilingStatus, number> = {
   headOfHousehold: 24150,
 };
 
-export function taxableIncome(profile: ClientProfile, filingStatus = profile.taxFilingStatus, income = grossHouseholdIncome(profile)) {
-  return Math.max(0, income - standardDeduction[filingStatus] - profile.currentRetirementContribution);
+export function taxableIncome(
+  profile: ClientProfile,
+  filingStatus = profile.taxFilingStatus,
+  income = taxIncomeForFilingStatus(profile, filingStatus),
+  preTaxRetirement = profileNumber(profile, 'currentRetirementContribution'),
+) {
+  return Math.max(0, income - standardDeduction[filingStatus] - Math.min(preTaxRetirement, income));
 }
 
 export function federalTaxFromTaxable(taxable: number, filingStatus: FilingStatus) {
@@ -126,8 +170,13 @@ export function federalTaxFromTaxable(taxable: number, filingStatus: FilingStatu
   return tax;
 }
 
-export function federalTax(profile: ClientProfile, filingStatus = profile.taxFilingStatus, income = grossHouseholdIncome(profile)) {
-  return federalTaxFromTaxable(taxableIncome(profile, filingStatus, income), filingStatus);
+export function federalTax(
+  profile: ClientProfile,
+  filingStatus = profile.taxFilingStatus,
+  income = taxIncomeForFilingStatus(profile, filingStatus),
+  preTaxRetirement = profileNumber(profile, 'currentRetirementContribution'),
+) {
+  return federalTaxFromTaxable(taxableIncome(profile, filingStatus, income, preTaxRetirement), filingStatus);
 }
 
 export function marginalTaxRate(profile: ClientProfile) {
@@ -135,20 +184,69 @@ export function marginalTaxRate(profile: ClientProfile) {
   return ordinaryBrackets[profile.taxFilingStatus].find(bracket => income <= bracket.cap)?.rate || 0.37;
 }
 
-export function iraRecommendation(profile: ClientProfile) {
-  const filing = profile.relationshipStatus === 'married' ? 'marriedJoint' : 'single';
-  const income = grossHouseholdIncome(profile);
-  const rothLimit = filing === 'marriedJoint' ? 252000 : 168000;
-  const traditionalDeductionLimit = filing === 'marriedJoint' ? 149000 : 91000;
-  const currentRate = marginalTaxRate(profile);
-  const futureLikelyHigher = profile.age < 35 && income < traditionalDeductionLimit && profile.riskTolerance !== 'low';
+export function payrollTax(income: number, filingStatus: FilingStatus = 'single') {
+  const socialSecurity = Math.min(Math.max(0, income), SOCIAL_SECURITY_WAGE_BASE_2026) * 0.062;
+  const medicare = Math.max(0, income) * 0.0145;
+  const additionalMedicare = Math.max(0, income - ADDITIONAL_MEDICARE_THRESHOLDS[filingStatus]) * 0.009;
+  return socialSecurity + medicare + additionalMedicare;
+}
 
-  if (income > rothLimit) {
+export function estimatedPayrollTax(profile: ClientProfile) {
+  const income = grossHouseholdIncome(profile);
+  const userIncome = profileDefaultNumber(profile, 'income');
+  const partnerIncome = profileNumber(profile, 'partnerIncome');
+  if (!includesPartnerInHousehold(profile)) return payrollTax(userIncome, profile.taxFilingStatus);
+  if (profile.taxFilingStatus !== 'marriedJoint') return payrollTax(userIncome, profile.taxFilingStatus) + payrollTax(partnerIncome, 'single');
+
+  const socialSecurity = Math.min(Math.max(0, userIncome), SOCIAL_SECURITY_WAGE_BASE_2026) * 0.062
+    + Math.min(Math.max(0, partnerIncome), SOCIAL_SECURITY_WAGE_BASE_2026) * 0.062;
+  const medicare = Math.max(0, income) * 0.0145;
+  const additionalMedicare = Math.max(0, income - ADDITIONAL_MEDICARE_THRESHOLDS[profile.taxFilingStatus]) * 0.009;
+  return socialSecurity + medicare + additionalMedicare;
+}
+
+export function estimatedFederalTax(profile: ClientProfile) {
+  if (!includesPartnerInHousehold(profile) || profile.taxFilingStatus === 'marriedJoint') return federalTax(profile);
+  return federalTax(profile, profile.taxFilingStatus, profileDefaultNumber(profile, 'income'), profileNumber(profile, 'currentRetirementContribution'))
+    + federalTax(profile, 'single', profileNumber(profile, 'partnerIncome'), 0);
+}
+
+export function estimatedAnnualTakeHome(profile: ClientProfile) {
+  const income = grossHouseholdIncome(profile);
+  return Math.max(0, income - Math.min(profileNumber(profile, 'currentRetirementContribution'), income) - estimatedFederalTax(profile) - estimatedPayrollTax(profile));
+}
+
+export function monthlySurplus(profile: ClientProfile) {
+  const autoPayment = profile.autoOwnership === 'financed' || profile.autoOwnership === 'leased' ? profileNumber(profile, 'carPayment') : 0;
+  return estimatedAnnualTakeHome(profile) / 12 - profileDefaultNumber(profile, 'monthlyExpenses') - autoPayment - profileNumber(profile, 'parentSupportMonthly');
+}
+
+export function iraRecommendation(profile: ClientProfile) {
+  const filing = profile.taxFilingStatus;
+  const income = taxIncomeForFilingStatus(profile, filing);
+  const rothPhaseout = ROTH_IRA_PHASEOUT_2026[filing];
+  const traditionalPhaseout = TRADITIONAL_IRA_ACTIVE_PARTICIPANT_PHASEOUT_2026[filing];
+  const currentRate = marginalTaxRate(profile);
+  const age = profileDefaultNumber(profile, 'age', 30);
+  const futureLikelyHigher = age < 35 && income < traditionalPhaseout.ends && profile.riskTolerance !== 'low';
+  const statutoryLimit = IRA_BASE_LIMIT_2026 + (age >= 50 ? IRA_CATCH_UP_50_PLUS_2026 : 0);
+  const annualLimit = Math.min(statutoryLimit, Math.max(0, income));
+
+  if (income >= rothPhaseout.ends) {
     return {
       account: 'Traditional IRA / 401(k)',
-      reason: 'Income is above the simple Roth IRA limit from the presentation. Pre-tax workplace contributions may still create tax savings.',
-      annualLimit: 7500,
+      reason: 'Income is above the 2026 Roth IRA phaseout range, so pre-tax workplace contributions or backdoor Roth planning may matter more.',
+      annualLimit,
       score: 58,
+    };
+  }
+
+  if (income >= rothPhaseout.starts) {
+    return {
+      account: 'Partial Roth IRA / 401(k)',
+      reason: 'Income falls inside the 2026 Roth IRA phaseout range, so only a reduced Roth IRA contribution may be allowed.',
+      annualLimit,
+      score: 68,
     };
   }
 
@@ -156,7 +254,7 @@ export function iraRecommendation(profile: ClientProfile) {
     return {
       account: 'Roth IRA',
       reason: 'The presentation frames Roth as strongest when future tax rates are expected to be higher than today.',
-      annualLimit: 7500,
+      annualLimit,
       score: 86,
     };
   }
@@ -164,16 +262,40 @@ export function iraRecommendation(profile: ClientProfile) {
   return {
     account: currentRate >= 0.24 ? 'Traditional IRA / 401(k)' : 'Roth IRA',
     reason: currentRate >= 0.24 ? 'A higher current bracket makes a deduction more valuable today.' : 'A lower current bracket makes paying tax now more attractive.',
-    annualLimit: 7500,
+    annualLimit,
     score: currentRate >= 0.24 ? 78 : 82,
   };
 }
 
 export function marriageTaxDelta(profile: ClientProfile) {
-  const singleA = federalTax(profile, 'single', profile.income);
-  const singleB = federalTax(profile, 'single', profile.partnerIncome);
-  const married = federalTax(profile, 'marriedJoint', profile.income + profile.partnerIncome);
+  const userIncome = profileDefaultNumber(profile, 'income');
+  const partnerIncome = profileNumber(profile, 'partnerIncome');
+  const householdIncome = userIncome + partnerIncome;
+  const userRetirement = Math.min(profileNumber(profile, 'currentRetirementContribution'), userIncome);
+  const singleA = federalTax(profile, 'single', userIncome, userRetirement);
+  const singleB = federalTax(profile, 'single', partnerIncome, 0);
+  const married = federalTax(profile, 'marriedJoint', householdIncome, userRetirement);
   return married - singleA - singleB;
+}
+
+export function longTermCapitalGainsTax(profile: ClientProfile, gains = profileNumber(profile, 'annualCapitalGains')) {
+  const filingStatus = profile.taxFilingStatus;
+  const ordinaryIncome = taxIncomeForFilingStatus(profile, filingStatus);
+  const preTaxRetirement = Math.min(profileNumber(profile, 'currentRetirementContribution'), ordinaryIncome);
+  const adjustedGrossIncomeBeforeGains = Math.max(0, ordinaryIncome - preTaxRetirement);
+  const ordinaryTaxableIncome = taxableIncome(profile, filingStatus, ordinaryIncome, preTaxRetirement);
+  const totalTaxableIncome = Math.max(0, adjustedGrossIncomeBeforeGains + Math.max(0, gains) - standardDeduction[filingStatus]);
+  const taxableGains = Math.max(0, Math.min(Math.max(0, gains), totalTaxableIncome - ordinaryTaxableIncome));
+  const taxableBase = ordinaryTaxableIncome;
+  const brackets = LONG_TERM_GAIN_BRACKETS_2026[profile.taxFilingStatus];
+  const zeroRateDollars = Math.max(0, Math.min(taxableGains, brackets.zeroRateCap - taxableBase));
+  const remainingAfterZero = Math.max(0, taxableGains - zeroRateDollars);
+  const fifteenRateSpace = Math.max(0, brackets.fifteenRateCap - Math.max(taxableBase, brackets.zeroRateCap));
+  const fifteenRateDollars = Math.min(remainingAfterZero, fifteenRateSpace);
+  const twentyRateDollars = Math.max(0, remainingAfterZero - fifteenRateDollars);
+  const niitBase = Math.max(0, adjustedGrossIncomeBeforeGains + Math.max(0, gains) - ADDITIONAL_MEDICARE_THRESHOLDS[profile.taxFilingStatus]);
+  const niit = Math.min(Math.max(0, gains), niitBase) * 0.038;
+  return fifteenRateDollars * 0.15 + twentyRateDollars * 0.2 + niit;
 }
 
 export function monthlyMortgagePayment(principal: number, annualRate: number, years: number) {
@@ -185,41 +307,44 @@ export function monthlyMortgagePayment(principal: number, annualRate: number, ye
 }
 
 export function housingReadiness(profile: ClientProfile) {
-  const downPaymentTarget = profile.desiredHomePrice * 0.2;
-  const principal = Math.max(0, profile.desiredHomePrice - profile.downPaymentSaved);
-  const payment = monthlyMortgagePayment(principal, profile.mortgageRate, profile.mortgageYears);
-  const totalHousing = payment + profile.desiredHomePrice * 0.012 / 12 + profile.desiredHomePrice * 0.006 / 12;
+  const desiredHomePrice = profileDefaultNumber(profile, 'desiredHomePrice');
+  const downPaymentSaved = profileNumber(profile, 'downPaymentSaved');
+  const downPaymentTarget = desiredHomePrice * 0.2;
+  const principal = Math.max(0, desiredHomePrice - downPaymentSaved);
+  const payment = monthlyMortgagePayment(principal, profileDefaultNumber(profile, 'mortgageRate'), profileDefaultNumber(profile, 'mortgageYears', 30));
+  const totalHousing = payment + desiredHomePrice * 0.012 / 12 + desiredHomePrice * 0.006 / 12;
   const dti = grossHouseholdIncome(profile) ? totalHousing * 12 / grossHouseholdIncome(profile) : 1;
-  const score = clamp(100 - Math.max(0, dti - 0.28) * 180 - Math.max(0, downPaymentTarget - profile.downPaymentSaved) / Math.max(1, downPaymentTarget) * 35, 15, 96);
+  const score = clamp(100 - Math.max(0, dti - 0.28) * 180 - Math.max(0, downPaymentTarget - downPaymentSaved) / Math.max(1, downPaymentTarget) * 35, 15, 96);
   return { downPaymentTarget, payment, totalHousing, dti, score };
 }
 
 export function carAffordability(profile: ClientProfile) {
   const monthlyIncome = grossHouseholdIncome(profile) / 12;
-  const carBurden = monthlyIncome ? profile.carPayment / monthlyIncome : 0;
-  const score = clamp(100 - carBurden * 450 - Math.max(0, profile.carLoanRate - 6) * 4, 18, 96);
+  const carBurden = monthlyIncome ? profileNumber(profile, 'carPayment') / monthlyIncome : 0;
+  const score = clamp(100 - carBurden * 450 - Math.max(0, profileDefaultNumber(profile, 'carLoanRate') - 6) * 4, 18, 96);
   return { carBurden, score };
 }
 
 export function vacationMonthlyNeed(profile: ClientProfile) {
-  return profile.annualTravelBudget / 12;
+  return profileNumber(profile, 'annualTravelBudget') / 12;
 }
 
 export function insuranceScore(profile: ClientProfile) {
   let score = 25;
   if (hasHealthCoverage(profile)) score += 20;
   if (hasAutoCoverage(profile)) score += profile.autoInsurance === 'full' ? 18 : 12;
-  if (hasDisabilityCoverage(profile)) score += profile.income > 40000 ? 25 : 15;
-  if (hasLifeCoverage(profile) || (profile.dependents === 0 && profile.relationshipStatus !== 'married')) score += 15;
+  if (hasDisabilityCoverage(profile)) score += profileDefaultNumber(profile, 'income') > 40000 ? 25 : 15;
+  if (hasLifeCoverage(profile) || (profileDefaultNumber(profile, 'dependents') === 0 && profile.relationshipStatus !== 'married')) score += 15;
   return clamp(score, 0, 100);
 }
 
 export function planScores(profile: ClientProfile) {
-  const cash = clamp(profile.cashSavings / Math.max(1, emergencyFundTarget(profile)) * 100, 0, 100);
-  const debt = clamp(100 - (profile.debt + profile.studentLoans + profile.carLoanBalance) / Math.max(1, grossHouseholdIncome(profile)) * 140 - Math.max(0, profile.debtRate - 7) * 4, 0, 100);
-  const future = clamp(retirementRate(profile) / 0.15 * 70 + profile.retirement / Math.max(1, grossHouseholdIncome(profile)) * 30, 0, 100);
+  const cash = clamp(profileNumber(profile, 'cashSavings') / Math.max(1, emergencyFundTarget(profile)) * 100, 0, 100);
+  const debt = clamp(100 - (profileNumber(profile, 'debt') + profileNumber(profile, 'studentLoans') + profileNumber(profile, 'carLoanBalance')) / Math.max(1, grossHouseholdIncome(profile)) * 140 - Math.max(0, profileDefaultNumber(profile, 'debtRate') - 7) * 4, 0, 100);
+  const future = clamp(retirementRate(profile) / 0.15 * 70 + profileNumber(profile, 'retirement') / Math.max(1, grossHouseholdIncome(profile)) * 30, 0, 100);
   const housing = housingReadiness(profile).score;
-  const tax = clamp(100 - Math.abs(federalTax(profile) - profile.estimatedTaxWithholding) / Math.max(1, grossHouseholdIncome(profile)) * 260, 20, 96);
+  const estimatedFederalTax = federalTax(profile) + longTermCapitalGainsTax(profile);
+  const tax = clamp(100 - Math.abs(estimatedFederalTax - profileNumber(profile, 'estimatedTaxWithholding')) / Math.max(1, grossHouseholdIncome(profile)) * 260, 20, 96);
   return { cash, debt, future, housing, tax, overall: Math.round((cash + debt + future + housing + tax) / 5) };
 }
 
@@ -230,22 +355,22 @@ export function buildRecommendations(profile: ClientProfile, goals: Goal[]): Rec
   const allocation = riskAllocation(profile);
   const currentBmi = bmi(profile);
 
-  if (profile.cashSavings < efTarget) {
+  if (profileNumber(profile, 'cashSavings') < efTarget) {
     recs.push({
       title: 'Build your emergency fund first',
       category: 'Cash',
       priority: 'High',
-      explanation: `You have ${money(profile.cashSavings)} in cash. A safer target is about ${money(efTarget)}, based on your monthly expenses and risk profile.`,
+      explanation: `You have ${money(profileNumber(profile, 'cashSavings'))} in cash entered. A safer target is about ${money(efTarget)}, based on your monthly expenses and risk profile.`,
       action: `Move about ${money(recommendedMonthlyPlan(profile).emergency)} per month into high-yield savings until funded.`,
     });
   }
 
-  if (profile.debt + profile.studentLoans > 0 && profile.debtRate >= 7) {
+  if (profileNumber(profile, 'debt') + profileNumber(profile, 'studentLoans') > 0 && profileDefaultNumber(profile, 'debtRate') >= 7) {
     recs.push({
       title: 'Attack high-interest debt before extra investing',
       category: 'Debt',
       priority: 'High',
-      explanation: `Debt costing around ${profile.debtRate}% is a guaranteed drag. Paying it down can beat many low-risk investments.`,
+      explanation: `Debt costing around ${profileDefaultNumber(profile, 'debtRate')}% is a guaranteed drag. Paying it down can beat many low-risk investments.`,
       action: `Use the avalanche method: minimum payments on everything, extra dollars to the highest rate balance.`,
     });
   }
@@ -254,11 +379,11 @@ export function buildRecommendations(profile: ClientProfile, goals: Goal[]): Rec
     title: 'Use a simple age-and-risk investment mix',
     category: 'Investing',
     priority: 'Medium',
-    explanation: `Based on age ${profile.age} and ${profile.riskTolerance} risk tolerance, a starter allocation is approximately ${allocation.stock}% stock ETFs, ${allocation.bonds}% bond ETFs, and ${allocation.cash}% cash.`,
+    explanation: `Based on age ${profileDefaultNumber(profile, 'age', 30)} and ${profile.riskTolerance} risk tolerance, a starter allocation is approximately ${allocation.stock}% stock ETFs, ${allocation.bonds}% bond ETFs, and ${allocation.cash}% cash.`,
     action: 'Automate monthly investing after emergency cash and expensive debt are under control.',
   });
 
-  if (!hasDisabilityCoverage(profile) && profile.income > 40000) {
+  if (!hasDisabilityCoverage(profile) && profileDefaultNumber(profile, 'income') > 40000) {
     recs.push({
       title: 'Protect your income with disability coverage',
       category: 'Insurance',
@@ -268,7 +393,7 @@ export function buildRecommendations(profile: ClientProfile, goals: Goal[]): Rec
     });
   }
 
-  if ((profile.dependents > 0 || profile.relationshipStatus === 'married') && !hasLifeCoverage(profile)) {
+  if ((profileDefaultNumber(profile, 'dependents') > 0 || profile.relationshipStatus === 'married') && !hasLifeCoverage(profile)) {
     recs.push({
       title: 'Consider term life insurance',
       category: 'Insurance',
@@ -298,14 +423,14 @@ export function buildRecommendations(profile: ClientProfile, goals: Goal[]): Rec
     });
   }
 
-  const urgentGoal = goals.find(g => g.priority === 'high' && g.targetAmount > g.currentAmount);
+  const urgentGoal = goals.find(g => g.priority === 'high' && goalNumber(g, 'targetAmount') > goalNumber(g, 'currentAmount'));
   if (urgentGoal) {
-    const needed = (urgentGoal.targetAmount - urgentGoal.currentAmount) / Math.max(1, goalYears(urgentGoal) * 12);
+    const needed = (goalNumber(urgentGoal, 'targetAmount') - goalNumber(urgentGoal, 'currentAmount')) / Math.max(1, goalYears(urgentGoal) * 12);
     recs.push({
       title: `Fund goal: ${urgentGoal.name}`,
       category: 'Cash',
       priority: 'Medium',
-      explanation: `To hit ${money(urgentGoal.targetAmount)} by ${urgentGoal.targetDate}, you need about ${money(needed)} per month before investment returns.`,
+      explanation: `To hit ${money(goalNumber(urgentGoal, 'targetAmount'))} by ${urgentGoal.targetDate}, you need about ${money(needed)} per month before investment returns.`,
       action: 'Create a separate goal bucket and automate transfers on payday.',
     });
   }
@@ -344,18 +469,61 @@ export function projectNetWorth(profile: ClientProfile, years = 10): ProjectionP
   const plan = recommendedMonthlyPlan(profile);
   const allocation = riskAllocation(profile);
   const annualReturn = allocation.stock / 100 * 0.07 + allocation.bonds / 100 * 0.035 + allocation.cash / 100 * 0.015;
-  let cash = profile.cashSavings;
-  let investments = profile.investments;
-  let retirement = profile.retirement;
-  let debt = profile.debt + profile.studentLoans;
+  const targetCash = emergencyFundTarget(profile);
+  let cash = profileNumber(profile, 'cashSavings');
+  let investments = profileNumber(profile, 'investments');
+  let retirement = profileNumber(profile, 'retirement');
+  let nonCarDebt = profileNumber(profile, 'debt') + profileNumber(profile, 'studentLoans');
+  let carLoanDebt = profile.autoOwnership === 'financed' ? profileNumber(profile, 'carLoanBalance') : 0;
+  let carValue = profileNumber(profile, 'carValue');
+  let homeValue = profile.rentOrOwn === 'own' ? profileNumber(profile, 'homeValue') : 0;
+  let mortgageDebt = profile.rentOrOwn === 'own' ? profileNumber(profile, 'mortgageBalance') : 0;
+  const plannedHomeSaleAge = profileNumber(profile, 'plannedHomeSaleAge');
+  const currentAge = profileDefaultNumber(profile, 'age', 30);
   const points: ProjectionPoint[] = [];
 
   for (let y = 0; y <= years; y++) {
-    points.push({ year: y, cash, investments, retirement, debt, netWorth: cash + investments + retirement - debt });
-    cash += plan.emergency * 12;
-    investments = investments * (1 + annualReturn) + plan.taxable * 12;
+    if (homeValue > 0 && plannedHomeSaleAge > 0 && currentAge + y >= plannedHomeSaleAge) {
+      investments += Math.max(0, homeValue - mortgageDebt) * 0.92;
+      homeValue = 0;
+      mortgageDebt = 0;
+    }
+
+    const debt = nonCarDebt + carLoanDebt + mortgageDebt;
+    points.push({ year: y, cash, investments, retirement, debt, carValue, carLoanDebt, homeValue, mortgageDebt, netWorth: cash + investments + retirement + carValue + homeValue - debt });
+    const emergencyContribution = Math.min(plan.emergency * 12, Math.max(0, targetCash - cash));
+    let redirectedCash = plan.emergency * 12 - emergencyContribution;
+    cash += emergencyContribution;
+    nonCarDebt *= (1 + Math.max(0, profileDefaultNumber(profile, 'debtRate')) / 100);
+    carLoanDebt *= (1 + Math.max(0, profileDefaultNumber(profile, 'carLoanRate')) / 100);
+    mortgageDebt = Math.max(0, mortgageDebt - profileNumber(profile, 'rentMortgage') * 12 * 0.55);
+
+    const annualCarPayment = profile.autoOwnership === 'financed' ? profileNumber(profile, 'carPayment') * 12 : 0;
+    const regularCarPaydown = Math.min(carLoanDebt, annualCarPayment);
+    carLoanDebt -= regularCarPaydown;
+
+    let extraDebtPayment = plan.debt * 12;
+    if (profileDefaultNumber(profile, 'carLoanRate') > profileDefaultNumber(profile, 'debtRate')) {
+      const carExtra = Math.min(carLoanDebt, extraDebtPayment);
+      carLoanDebt -= carExtra;
+      extraDebtPayment -= carExtra;
+      const nonCarExtra = Math.min(nonCarDebt, extraDebtPayment);
+      nonCarDebt -= nonCarExtra;
+      extraDebtPayment -= nonCarExtra;
+    } else {
+      const nonCarExtra = Math.min(nonCarDebt, extraDebtPayment);
+      nonCarDebt -= nonCarExtra;
+      extraDebtPayment -= nonCarExtra;
+      const carExtra = Math.min(carLoanDebt, extraDebtPayment);
+      carLoanDebt -= carExtra;
+      extraDebtPayment -= carExtra;
+    }
+
+    redirectedCash += extraDebtPayment;
+    investments = investments * (1 + annualReturn) + (plan.taxable * 12) + redirectedCash;
     retirement = retirement * (1 + annualReturn) + plan.retirement * 12;
-    debt = Math.max(0, debt * (1 + profile.debtRate / 100) - plan.debt * 12);
+    carValue *= profile.autoOwnership === 'none' ? 1 : 0.88;
+    homeValue *= homeValue > 0 ? 1.025 : 0;
   }
   return points;
 }
@@ -365,14 +533,22 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
   const plan = recommendedMonthlyPlan(profile);
   const ira = iraRecommendation(profile);
   const marriageDelta = marriageTaxDelta(profile);
+  const userIncome = profileDefaultNumber(profile, 'income');
+  const partnerIncome = profileNumber(profile, 'partnerIncome');
+  const marriageHouseholdIncome = userIncome + partnerIncome;
+  const userRetirement = Math.min(profileNumber(profile, 'currentRetirementContribution'), userIncome);
+  const userSingleTax = federalTax(profile, 'single', userIncome, userRetirement);
+  const partnerSingleTax = federalTax(profile, 'single', partnerIncome, 0);
+  const marriedJointTax = federalTax(profile, 'marriedJoint', marriageHouseholdIncome, userRetirement);
   const housing = housingReadiness(profile);
   const car = carAffordability(profile);
-  const goalMonthly = goals.reduce((sum, goal) => sum + Math.max(0, goal.targetAmount - goal.currentAmount) / Math.max(1, goalYears(goal) * 12), 0);
+  const goalMonthly = goals.reduce((sum, goal) => sum + Math.max(0, goalNumber(goal, 'targetAmount') - goalNumber(goal, 'currentAmount')) / Math.max(1, goalYears(goal) * 12), 0);
   const insurance = insuranceScore(profile);
-  const annualTax = federalTax(profile);
-  const taxGap = annualTax - profile.estimatedTaxWithholding;
+  const ordinaryTax = federalTax(profile);
+  const capitalGainsTax = longTermCapitalGainsTax(profile);
+  const annualTax = ordinaryTax + capitalGainsTax;
+  const taxGap = annualTax - profileNumber(profile, 'estimatedTaxWithholding');
   const allocation = riskAllocation(profile);
-  const capitalGainsTax = profile.annualCapitalGains * (profile.taxFilingStatus === 'marriedJoint' ? 0.15 : taxableIncome(profile) < 49450 ? 0 : 0.15);
   const vacationNeed = vacationMonthlyNeed(profile);
   const monthlyIncome = grossHouseholdIncome(profile) / 12;
 
@@ -399,8 +575,8 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
       },
       details: [
         'The presentation compares traditional accounts as tax-deferred and Roth accounts as tax-exempt.',
-        'The app treats younger users in lower current brackets as better Roth candidates, then shifts toward pre-tax savings when today tax rate is high.',
-        'Qualified accounts also have contribution limits, withdrawal rules, and RMD considerations.',
+        'The 2026 IRA model uses the indexed $7,500 base limit, the $1,100 age-50 catch-up amount, and Roth phaseout ranges by filing status.',
+        'Traditional IRA deductibility can phase out when the contributor is covered by a workplace retirement plan, so employer-plan details still matter.',
       ],
       nextMove: `Put the next retirement dollars toward ${ira.account}, after any employer match and expensive debt.`,
     },
@@ -410,22 +586,24 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
       category: 'Taxes',
       score: scores.tax,
       metric: taxGap > 0 ? `${money(taxGap)} short` : `${money(Math.abs(taxGap))} cushion`,
-      summary: 'Estimates ordinary federal tax using the 2026 bracket structure from the presentation and compares it with withholding.',
+      summary: 'Estimates ordinary federal tax plus long-term capital gains tax, then compares the result with withholding.',
       stats: [
         { label: 'Taxable income', value: money(taxableIncome(profile)) },
-        { label: 'Federal tax', value: money(annualTax) },
-        { label: 'Withheld', value: money(profile.estimatedTaxWithholding) },
+        { label: 'Federal tax', value: money(ordinaryTax) },
+        { label: 'Gain tax', value: money(capitalGainsTax) },
+        { label: 'Withheld', value: money(profileNumber(profile, 'estimatedTaxWithholding')) },
       ],
       chart: {
         title: 'Tax Withholding Check',
         xAxisLabel: 'Tax figure',
         yAxisLabel: 'Dollars',
-        labels: ['Taxable income', 'Federal tax', 'Withheld'],
-        values: [taxableIncome(profile), annualTax, profile.estimatedTaxWithholding],
+        labels: ['Taxable income', 'Est. tax', 'Withheld'],
+        values: [taxableIncome(profile), annualTax, profileNumber(profile, 'estimatedTaxWithholding')],
         valuePrefix: '$',
       },
       details: [
         'Ordinary income, short-term capital gains, and ordinary dividends are modeled through the same progressive bracket ladder.',
+        'Monthly surplus starts with estimated take-home pay after federal income tax, payroll tax, and entered retirement contributions.',
         'A gap is not a final tax return, but it gives the user an early warning before April.',
         'Pre-tax retirement contributions reduce taxable income in this simplified model.',
       ],
@@ -439,8 +617,8 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
       metric: marriageDelta > 0 ? `${money(marriageDelta)} penalty` : `${money(Math.abs(marriageDelta))} bonus`,
       summary: 'Compares two single tax estimates with a married filing jointly estimate.',
       stats: [
-        { label: 'Your income', value: money(profile.income) },
-        { label: 'Partner income', value: money(profile.partnerIncome) },
+        { label: 'Your income', value: money(userIncome) },
+        { label: 'Partner income', value: money(partnerIncome) },
         { label: 'Delta', value: money(marriageDelta) },
       ],
       chart: {
@@ -448,25 +626,26 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
         xAxisLabel: 'Filing scenario',
         yAxisLabel: 'Estimated tax',
         labels: ['You single', 'Partner single', 'Married joint'],
-        values: [federalTax(profile, 'single', profile.income), federalTax(profile, 'single', profile.partnerIncome), federalTax(profile, 'marriedJoint', profile.income + profile.partnerIncome)],
+        values: [userSingleTax, partnerSingleTax, marriedJointTax],
         valuePrefix: '$',
       },
       details: [
         'The presentation flags marriage tax penalty or bonus as a wealth-management topic.',
+        'The comparison keeps the entered retirement contribution with the user instead of splitting it across both partners.',
         'The biggest swings often appear when both partners have high and similar incomes, or when one partner earns much less.',
         'The app should pair this with prenup, beneficiary, insurance, debt, and shared-budget planning before giving a life decision answer.',
       ],
-      nextMove: profile.partnerIncome ? 'Review tax, debt, insurance, and beneficiary changes before combining finances.' : 'Add partner income to make this module meaningful.',
+      nextMove: partnerIncome ? 'Review tax, debt, insurance, and beneficiary changes before combining finances.' : 'Add partner income to make this module meaningful.',
     },
     {
       id: 'capital-gains',
       title: 'Capital Gains Layer',
       category: 'Taxes',
-      score: clamp(90 - capitalGainsTax / Math.max(1, profile.annualCapitalGains) * 60, 35, 95),
+      score: clamp(90 - capitalGainsTax / Math.max(1, profileNumber(profile, 'annualCapitalGains')) * 60, 35, 95),
       metric: `${money(capitalGainsTax)} est. tax`,
       summary: 'Models long-term capital gains as a separate layer stacked on taxable income, matching the graphic approach in the presentation.',
       stats: [
-        { label: 'Gains', value: money(profile.annualCapitalGains) },
+        { label: 'Gains', value: money(profileNumber(profile, 'annualCapitalGains')) },
         { label: 'Taxable base', value: money(taxableIncome(profile)) },
         { label: 'Est. gain tax', value: money(capitalGainsTax) },
       ],
@@ -475,11 +654,12 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
         xAxisLabel: 'Tax layer',
         yAxisLabel: 'Dollars',
         labels: ['Taxable base', 'Gains', 'Est. gain tax'],
-        values: [taxableIncome(profile), profile.annualCapitalGains, capitalGainsTax],
+        values: [taxableIncome(profile), profileNumber(profile, 'annualCapitalGains'), capitalGainsTax],
         valuePrefix: '$',
       },
       details: [
-        'Long-term gains and qualified dividends use a separate 0%, 15%, and 20% bracket table.',
+        'Long-term gains and qualified dividends use the 2026 0%, 15%, and 20% bracket table.',
+        'Unused standard deduction can shield part of the gains before the preferential brackets apply.',
         'Tax-loss harvesting can help offset gains, but wash-sale rules can deny losses when replacement purchases happen too soon.',
         'The simplified model is best used as a planning signal, not a filing calculation.',
       ],
@@ -490,10 +670,10 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
       title: 'Cash Runway',
       category: 'Wealth',
       score: scores.cash,
-      metric: `${(profile.cashSavings / Math.max(1, profile.monthlyExpenses)).toFixed(1)} months`,
+      metric: `${(profileNumber(profile, 'cashSavings') / Math.max(1, profileDefaultNumber(profile, 'monthlyExpenses'))).toFixed(1)} months`,
       summary: 'Uses core expenses, dependents, and risk tolerance to set a 4 to 6 month emergency-fund target.',
       stats: [
-        { label: 'Cash', value: money(profile.cashSavings) },
+        { label: 'Cash', value: money(profileNumber(profile, 'cashSavings')) },
         { label: 'Target', value: money(emergencyFundTarget(profile)) },
         { label: 'Monthly surplus', value: money(plan.surplus) },
       ],
@@ -502,15 +682,16 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
         xAxisLabel: 'Cash measure',
         yAxisLabel: 'Dollars',
         labels: ['Cash', 'Target', 'Annual surplus'],
-        values: [profile.cashSavings, emergencyFundTarget(profile), plan.surplus * 12],
+        values: [profileNumber(profile, 'cashSavings'), emergencyFundTarget(profile), plan.surplus * 12],
         valuePrefix: '$',
       },
       details: [
         'Liquidity needs in the presentation include major purchases, life events, education, and medical needs.',
+        'The surplus calculation uses estimated take-home pay, then subtracts expenses, car payments, and family support.',
         'The app keeps emergency cash separate from vacation, car, and home goals so one goal does not cannibalize another.',
         'Lower risk tolerance or dependents pushes the target closer to six months.',
       ],
-      nextMove: profile.cashSavings < emergencyFundTarget(profile) ? `Route about ${money(plan.emergency)} per month to cash first.` : 'Keep cash stable and send extra dollars to debt, retirement, or goals.',
+      nextMove: profileNumber(profile, 'cashSavings') < emergencyFundTarget(profile) ? `Route about ${money(plan.emergency)} per month to cash first.` : 'Keep cash stable and send extra dollars to debt, retirement, or goals.',
     },
     {
       id: 'housing',
@@ -520,7 +701,7 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
       metric: `${Math.round(housing.dti * 100)}% housing DTI`,
       summary: 'Combines down payment progress, estimated mortgage payment, taxes, insurance, and income stress.',
       stats: [
-        { label: 'Home target', value: money(profile.desiredHomePrice) },
+        { label: 'Home target', value: money(profileDefaultNumber(profile, 'desiredHomePrice')) },
         { label: 'Payment est.', value: money(housing.totalHousing) },
         { label: 'Down target', value: money(housing.downPaymentTarget) },
       ],
@@ -529,7 +710,7 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
         xAxisLabel: 'Housing measure',
         yAxisLabel: 'Dollars',
         labels: ['Saved', 'Down target', 'Annual cost'],
-        values: [profile.downPaymentSaved, housing.downPaymentTarget, housing.totalHousing * 12],
+        values: [profileNumber(profile, 'downPaymentSaved'), housing.downPaymentTarget, housing.totalHousing * 12],
         valuePrefix: '$',
       },
       details: [
@@ -572,11 +753,11 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
       category: 'Life',
       score: clamp(100 - vacationNeed / Math.max(1, monthlyIncome) * 500, 20, 96),
       metric: `${money(vacationNeed)} / mo`,
-      summary: `${profile.vacationsPerYear} planned vacation(s) per year are translated into a monthly savings target.`,
+      summary: `${profileNumber(profile, 'vacationsPerYear')} planned vacation(s) per year are translated into a monthly savings target.`,
       stats: [
-        { label: 'Annual travel', value: money(profile.annualTravelBudget) },
-        { label: 'Trips', value: `${profile.vacationsPerYear}` },
-        { label: 'Per trip', value: money(profile.annualTravelBudget / Math.max(1, profile.vacationsPerYear)) },
+        { label: 'Annual travel', value: money(profileNumber(profile, 'annualTravelBudget')) },
+        { label: 'Trips', value: `${profileNumber(profile, 'vacationsPerYear')}` },
+        { label: 'Per trip', value: money(profileNumber(profile, 'annualTravelBudget') / Math.max(1, profileNumber(profile, 'vacationsPerYear'))) },
       ],
       chart: {
         title: 'Travel Budget Fit',
@@ -601,22 +782,23 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
       metric: `${Math.round(car.carBurden * 100)}% of income`,
       summary: 'Checks whether the current or next car is crowding out savings goals.',
       stats: [
-        { label: 'Payment', value: money(profile.carPayment) },
-        { label: 'Loan balance', value: money(profile.carLoanBalance) },
-        { label: 'APR', value: `${profile.carLoanRate}%` },
+        { label: 'Payment', value: money(profileNumber(profile, 'carPayment')) },
+        { label: 'Loan balance', value: money(profileNumber(profile, 'carLoanBalance')) },
+        { label: 'APR', value: `${profileDefaultNumber(profile, 'carLoanRate')}%` },
       ],
       chart: {
         title: 'Auto Cost Pressure',
         xAxisLabel: 'Auto measure',
         yAxisLabel: 'Dollars per month',
         labels: ['Payment', 'Income', 'Loan / 12'],
-        values: [profile.carPayment, monthlyIncome, profile.carLoanBalance / 12],
+        values: [profileNumber(profile, 'carPayment'), monthlyIncome, profileNumber(profile, 'carLoanBalance') / 12],
         valuePrefix: '$',
       },
       details: [
         'Automobiles are listed in the presentation as a major liquidity need.',
         'The score penalizes high payment burden and high loan APR because those dollars compete with goals.',
-        'A later version can add lease-vs-buy, depreciation, insurance, maintenance, and trade-in scenarios.',
+        'The projection now carries car loan debt separately, applies the regular car payment, and depreciates the vehicle value over time.',
+        'A later version can add lease-vs-buy, insurance, maintenance, and trade-in scenarios.',
       ],
       nextMove: car.carBurden > 0.1 ? 'Avoid upgrading the car until the payment is below 10% of monthly income.' : 'Keep the car plan, but compare insurance and maintenance costs before upgrading.',
     },
@@ -630,7 +812,7 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
       stats: [
         { label: 'Health', value: profile.healthInsurance },
         { label: 'Auto', value: profile.autoInsurance },
-        { label: 'Vehicle', value: `${profile.carYear || ''} ${profile.carMake || ''} ${profile.carModel || ''}`.trim() || 'Not listed' },
+        { label: 'Vehicle', value: `${profileNumber(profile, 'carYear') || ''} ${profile.carMake || ''} ${profile.carModel || ''}`.trim() || 'Not listed' },
       ],
       chart: null,
       details: [
@@ -638,7 +820,7 @@ export function buildPlanningModules(profile: ClientProfile, goals: Goal[]): Pla
         'For young adults, disability insurance often matters because future income is their largest asset.',
         'Life insurance becomes more important with dependents, a spouse, shared debt, or family support obligations.',
       ],
-      nextMove: !hasDisabilityCoverage(profile) && profile.income > 40000 ? 'Check employer disability coverage first.' : 'Review deductibles, liability limits, and beneficiaries once per year.',
+      nextMove: !hasDisabilityCoverage(profile) && profileDefaultNumber(profile, 'income') > 40000 ? 'Check employer disability coverage first.' : 'Review deductibles, liability limits, and beneficiaries once per year.',
     },
     {
       id: 'allocation',

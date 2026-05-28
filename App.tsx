@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { useNavigation } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
@@ -11,9 +13,11 @@ import ResultsScreen from './src/screens/ResultsScreen';
 import PlanningScreen from './src/screens/PlanningScreen';
 import WelcomeScreen from './src/screens/WelcomeScreen';
 import ShortTermScreen from './src/screens/ShortTermScreen';
+import AuthScreen from './src/screens/AuthScreen';
+import PaymentScreen from './src/screens/PaymentScreen';
 import { theme } from './src/utils/theme';
 
-export type RootStackParamList = { Welcome: undefined; Main: undefined };
+export type RootStackParamList = { Welcome: undefined; Auth: undefined; Payment: { email?: string } | undefined; Main: undefined };
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 type ScreenKey = 'overview' | 'profile' | 'goals' | 'planning' | 'shortTerm' | 'analysis';
@@ -29,6 +33,7 @@ const screens: { key: ScreenKey; label: string; component: React.ComponentType }
 
 function MainTabs() {
   const [active, setActive] = useState<ScreenKey>('overview');
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const current = screens.find(screen => screen.key === active) || screens[0];
   const ActiveScreen = current.component;
 
@@ -62,6 +67,15 @@ function MainTabs() {
             );
           })}
         </ScrollView>
+
+        <View style={styles.accountRow}>
+          <TouchableOpacity style={styles.accountButton} onPress={() => navigation.navigate('Auth')}>
+            <Text style={styles.accountText}>Sign up / Log in</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.payButton} onPress={() => navigation.navigate('Payment', {})}>
+            <Text style={styles.payText}>Unlock for $0.99</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.screen}>
@@ -78,6 +92,8 @@ export default function App() {
         <StatusBar style="auto" />
         <Stack.Navigator screenOptions={{ headerShown: false }} initialRouteName="Welcome">
           <Stack.Screen name="Welcome" component={WelcomeScreen} />
+          <Stack.Screen name="Auth" component={AuthScreen} />
+          <Stack.Screen name="Payment" component={PaymentScreen} />
           <Stack.Screen name="Main" component={MainTabs} />
         </Stack.Navigator>
       </NavigationContainer>
@@ -116,5 +132,10 @@ const styles = StyleSheet.create({
   navItemActive: { backgroundColor: '#FFFFFF', borderColor: '#FFFFFF' },
   navText: { color: '#FFFFFF', fontWeight: '900', fontSize: 14 },
   navTextActive: { color: theme.colors.logoBlue },
+  accountRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  accountButton: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.32)', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12 },
+  accountText: { color: '#FFFFFF', fontWeight: '900' },
+  payButton: { backgroundColor: '#FFFFFF', borderRadius: 8, paddingHorizontal: 16, paddingVertical: 12 },
+  payText: { color: theme.colors.logoBlue, fontWeight: '900' },
   screen: { flex: 1 },
 });

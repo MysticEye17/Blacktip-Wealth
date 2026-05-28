@@ -15,9 +15,14 @@ export default function WelcomeScreen({ navigation }: Props) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={[styles.topBar, !isWide && styles.topBarCompact]}>
         <Image source={require('../../assets/blacktip-logo-official.png')} style={[styles.logo, !isWide && styles.logoCompact]} resizeMode="contain" />
-        <TouchableOpacity style={styles.smallButton} onPress={() => navigation.replace('Main')}>
-          <Text style={styles.smallButtonText}>Start plan</Text>
-        </TouchableOpacity>
+        <View style={styles.topActions}>
+          <TouchableOpacity style={styles.loginButton} onPress={() => navigation.navigate('Auth')}>
+            <Text style={styles.loginButtonText}>Log in</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.smallButton} onPress={() => navigation.navigate('Auth')}>
+            <Text style={styles.smallButtonText}>Sign up</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <Text style={[styles.brandTitle, !isWide && styles.brandTitleCompact]}>Blacktip Wealth</Text>
@@ -30,7 +35,7 @@ export default function WelcomeScreen({ navigation }: Props) {
             A personal decision engine for cash flow, debt, investing, taxes, insurance, housing, and the goals that compete for your money.
           </Text>
           <View style={[styles.actions, !isWide && styles.actionsCompact]}>
-            <TouchableOpacity style={[styles.button, !isWide && styles.actionButtonCompact]} onPress={() => navigation.replace('Main')}>
+            <TouchableOpacity style={[styles.button, !isWide && styles.actionButtonCompact]} onPress={() => navigation.navigate('Auth')}>
               <Text style={styles.buttonText}>Build my plan</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.ghostButton, !isWide && styles.actionButtonCompact]} onPress={() => navigation.replace('Main')}>
@@ -119,6 +124,9 @@ const styles = StyleSheet.create({
   logoCompact: { width: 128, height: 72 },
   smallButton: { backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingVertical: 13, borderRadius: 8 },
   smallButtonText: { color: theme.colors.logoBlue, fontWeight: '900', fontSize: 15 },
+  topActions: { flexDirection: 'row', gap: 10 },
+  loginButton: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.34)', paddingHorizontal: 20, paddingVertical: 13, borderRadius: 8 },
+  loginButtonText: { color: '#FFFFFF', fontWeight: '900', fontSize: 15 },
   brandTitle: {
     color: '#FFFFFF',
     fontSize: 92,

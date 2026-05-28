@@ -4,24 +4,43 @@ import Card from '../components/Card';
 import Field from '../components/Field';
 import Pill from '../components/Pill';
 import SectionHeader from '../components/SectionHeader';
-import { Goal, GoalType } from '../types';
-import { defaultGoals } from '../utils/defaultData';
+import { ClientProfile, Goal, GoalType } from '../types';
+import { defaultGoals, defaultProfile } from '../utils/defaultData';
 import { money } from '../utils/calculations';
-import { loadGoals, saveGoals } from '../utils/storage';
+import { loadGoals, loadProfile, saveGoals } from '../utils/storage';
 import { theme } from '../utils/theme';
 
 export default function GoalsScreen() {
   const [goals, setGoals] = useState<Goal[]>(defaultGoals);
+  const [profile, setProfile] = useState<ClientProfile>(defaultProfile);
   const [draft, setDraft] = useState<Goal>({ id: Date.now().toString(), name: '', type: 'savings', targetAmount: 0, currentAmount: 0, years: 1, targetDate: dateFromMonths(12), priority: 'medium' });
   const [dateOpen, setDateOpen] = useState(false);
-  useEffect(() => { loadGoals().then(setGoals); }, []);
+  useEffect(() => { loadGoals().then(setGoals); loadProfile().then(setProfile); }, []);
 
   async function persist(next: Goal[]) { setGoals(next); await saveGoals(next); }
   function addGoal() {
-    if (!draft.name || draft.targetAmount <= 0) return Alert.alert('Missing info', 'Add a goal name and target amount.');
+    if (!draft.name || num(draft.targetAmount) <= 0) return Alert.alert('Missing info', 'Add a goal name and target amount.');
     if (!isValidDate(draft.targetDate)) return Alert.alert('Check the date', 'Use a target date like 2027-05-27.');
     persist([...goals, { ...draft, id: Date.now().toString() }]);
     setDraft({ id: Date.now().toString(), name: '', type: 'savings', targetAmount: 0, currentAmount: 0, years: 1, targetDate: dateFromMonths(12), priority: 'medium' });
+  }
+
+  function addHomeSaleGoal() {
+    const homeValue = num(profile.homeValue);
+    const mortgageBalance = num(profile.mortgageBalance);
+    const equity = Math.max(0, homeValue - mortgageBalance);
+    if (!equity) return Alert.alert('Home value needed', 'Add home value and mortgage balance in Profile first.');
+    const years = Math.max(1, num(profile.plannedHomeSaleAge) - num(profile.age || 30));
+    persist([...goals, {
+      id: Date.now().toString(),
+      name: 'Sell house for retirement',
+      type: 'homeSale',
+      targetAmount: equity,
+      currentAmount: equity,
+      years,
+      targetDate: dateFromMonths(years * 12),
+      priority: 'medium',
+    }]);
   }
 
   return (
@@ -31,9 +50,9 @@ export default function GoalsScreen() {
         <Text style={styles.cardTitle}>Add a goal</Text>
         <Field label="Goal name" value={draft.name} keyboardType="default" onChangeText={name => setDraft(d => ({ ...d, name }))} />
         <Text style={styles.label}>Goal type</Text>
-        <View style={styles.wrap}>{(['savings', 'purchase', 'vacation'] as GoalType[]).map(type => <Pill key={type} label={type} active={draft.type === type} onPress={() => setDraft(d => ({ ...d, type }))} />)}</View>
-        <Field label="Target amount" value={String(draft.targetAmount)} onChangeText={v => setDraft(d => ({ ...d, targetAmount: Number(v) || 0 }))} />
-        <Field label="Current amount" value={String(draft.currentAmount)} onChangeText={v => setDraft(d => ({ ...d, currentAmount: Number(v) || 0 }))} />
+        <View style={styles.wrap}>{(['savings', 'purchase', 'vacation', 'homeSale'] as GoalType[]).map(type => <Pill key={type} label={type === 'homeSale' ? 'sell house' : type} active={draft.type === type} onPress={() => setDraft(d => ({ ...d, type }))} />)}</View>
+        <Field label="Target amount" value={fieldValue(draft.targetAmount)} onChangeText={v => setDraft(d => ({ ...d, targetAmount: parseNum(v) }))} />
+        <Field label="Current amount" value={fieldValue(draft.currentAmount)} onChangeText={v => setDraft(d => ({ ...d, currentAmount: parseNum(v) }))} />
         <Text style={styles.label}>Target date</Text>
         <TouchableOpacity style={styles.dateButton} onPress={() => setDateOpen(true)}>
           <Text style={styles.dateText}>{formatDateLabel(draft.targetDate)}</Text>
@@ -42,10 +61,11 @@ export default function GoalsScreen() {
         <Text style={styles.label}>Priority</Text>
         <View style={styles.wrap}>{(['low', 'medium', 'high'] as const).map(p => <Pill key={p} label={p} active={draft.priority === p} onPress={() => setDraft(d => ({ ...d, priority: p }))} />)}</View>
         <TouchableOpacity style={styles.button} onPress={addGoal}><Text style={styles.buttonText}>Add goal</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.secondaryButton} onPress={addHomeSaleGoal}><Text style={styles.secondaryButtonText}>Add sell-house retirement goal</Text></TouchableOpacity>
       </Card>
       {goals.map(goal => {
-        const progress = Math.min(100, Math.round(goal.currentAmount / goal.targetAmount * 100));
-        const monthly = Math.max(0, (goal.targetAmount - goal.currentAmount) / Math.max(1, monthsUntil(goal.targetDate)));
+        const progress = Math.min(100, Math.round(num(goal.currentAmount) / Math.max(1, num(goal.targetAmount)) * 100));
+        const monthly = Math.max(0, (num(goal.targetAmount) - num(goal.currentAmount)) / Math.max(1, monthsUntil(goal.targetDate)));
         return (
           <Card key={goal.id}>
             <View style={styles.goalTop}>
@@ -54,7 +74,7 @@ export default function GoalsScreen() {
             </View>
             <Text style={styles.type}>{goal.type} by {formatDateLabel(goal.targetDate)}</Text>
             <View style={styles.track}><View style={[styles.fill, { width: `${progress}%` }]} /></View>
-            <Text style={styles.text}>{money(goal.currentAmount)} saved of {money(goal.targetAmount)} - {progress}%</Text>
+            <Text style={styles.text}>{money(num(goal.currentAmount))} saved of {money(num(goal.targetAmount))} - {progress}%</Text>
             <Text style={styles.text}>Needed: {money(monthly)} per month through the target date</Text>
             <TouchableOpacity onPress={() => persist(goals.filter(g => g.id !== goal.id))}><Text style={styles.delete}>Delete</Text></TouchableOpacity>
           </Card>
@@ -81,6 +101,19 @@ export default function GoalsScreen() {
       </Modal>
     </ScrollView>
   );
+}
+
+function num(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function parseNum(value: string) {
+  const cleaned = value.replace(/[^0-9.]/g, '');
+  return cleaned ? Number(cleaned) : null;
+}
+
+function fieldValue(value: number | null | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
 }
 
 function dateFromMonths(months: number) {
@@ -116,6 +149,8 @@ const styles = StyleSheet.create({
   dateChevron: { color: theme.colors.primary, fontWeight: '800', marginTop: 4 },
   button: { backgroundColor: theme.colors.deepBlue, borderRadius: 8, padding: 15, alignItems: 'center', marginTop: 8 },
   buttonText: { color: '#fff', fontWeight: '900' },
+  secondaryButton: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 10 },
+  secondaryButtonText: { color: theme.colors.deepBlue, fontWeight: '900' },
   goalTop: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   goalTitle: { fontSize: 18, fontWeight: '900', color: theme.colors.secondary, flex: 1 },
   type: { color: theme.colors.primary, fontWeight: '800', marginTop: 5, textTransform: 'capitalize' },

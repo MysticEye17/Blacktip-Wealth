@@ -3,36 +3,53 @@ import { ScrollView, Text, StyleSheet, View, useWindowDimensions } from 'react-n
 import { useFocusEffect } from '@react-navigation/native';
 import { LineChart } from 'react-native-chart-kit';
 import Card from '../components/Card';
+import PaywallCard from '../components/PaywallCard';
 import SectionHeader from '../components/SectionHeader';
 import { buildPlanningModules, buildRecommendations, emergencyFundTarget, grossHouseholdIncome, money, monthlySurplus, netWorth, planScores, projectNetWorth, recommendedMonthlyPlan, retirementRate } from '../utils/calculations';
-import { loadGoals, loadProfile } from '../utils/storage';
+import { loadGoals, loadPremiumAccess, loadProfile, savePremiumAccess } from '../utils/storage';
 import { ClientProfile, Goal } from '../types';
 import { defaultGoals, defaultProfile } from '../utils/defaultData';
 import { theme } from '../utils/theme';
 
 const priorityColor = { High: theme.colors.danger, Medium: theme.colors.warning, Low: theme.colors.success };
+const num = (value: number | null | undefined) => typeof value === 'number' && Number.isFinite(value) ? value : 0;
 
 export default function DashboardScreen() {
   const [profile, setProfile] = useState<ClientProfile>(defaultProfile);
   const [goals, setGoals] = useState<Goal[]>(defaultGoals);
+  const [hasPremium, setHasPremium] = useState(false);
   const { width } = useWindowDimensions();
   const isWide = width >= 760;
   const chartWidth = Math.min(width - 72, 900);
 
-  useFocusEffect(useCallback(() => { loadProfile().then(setProfile); loadGoals().then(setGoals); }, []));
+  useFocusEffect(useCallback(() => {
+    loadProfile().then(setProfile);
+    loadGoals().then(setGoals);
+    loadPremiumAccess().then(setHasPremium);
+  }, []));
 
   const plan = recommendedMonthlyPlan(profile);
   const projection = projectNetWorth(profile, 10);
-  const recs = buildRecommendations(profile, goals).slice(0, 4);
+  const recs = buildRecommendations(profile, goals);
+  const visibleRecs = hasPremium ? recs.slice(0, 4) : recs.slice(0, 2);
   const scores = planScores(profile);
-  const modules = buildPlanningModules(profile, goals).slice(0, 4);
+  const modules = hasPremium ? buildPlanningModules(profile, goals).slice(0, 4) : [];
   const sampledProjection = projection.filter((_, i) => i % 2 === 0);
   const labels = sampledProjection.map(p => `${p.year}`);
   const data = sampledProjection.map(p => Math.round(p.netWorth / 1000));
   const starting = projection[0];
   const ending = projection[projection.length - 1];
   const projectedGain = ending.netWorth - starting.netWorth;
-  const cashGap = Math.max(0, emergencyFundTarget(profile) - profile.cashSavings);
+  const cashGap = Math.max(0, emergencyFundTarget(profile) - num(profile.cashSavings));
+
+  async function unlockPremium() {
+    await savePremiumAccess(true);
+    setHasPremium(true);
+  }
+
+  async function restorePremium() {
+    setHasPremium(await loadPremiumAccess());
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -47,15 +64,15 @@ export default function DashboardScreen() {
         <View style={[styles.heroDivider, !isWide && styles.heroDividerCompact]} />
         <View style={styles.heroCopy}>
           <Text style={styles.overline}>Highest priority</Text>
-          <Text style={styles.heroTitle}>{recs[0]?.title || 'Keep the plan funded'}</Text>
-          <Text style={styles.heroText}>{recs[0]?.action || 'Maintain savings automation and review the plan after income or goal changes.'}</Text>
+          <Text style={styles.heroTitle}>{visibleRecs[0]?.title || 'Keep the plan funded'}</Text>
+          <Text style={styles.heroText}>{visibleRecs[0]?.action || 'Maintain savings automation and review the plan after income or goal changes.'}</Text>
         </View>
       </View>
 
       <View style={styles.metricGrid}>
-        <Metric label="Monthly surplus" value={money(monthlySurplus(profile))} note="Available after expenses and family support" tone="primary" isWide={isWide} />
+        <Metric label="Monthly surplus" value={money(monthlySurplus(profile))} note="After estimated federal and payroll taxes, retirement, car payment, expenses, and family support" tone="primary" isWide={isWide} />
         <Metric label="Net worth" value={money(netWorth(profile))} note="Assets minus listed debt" tone="blue" isWide={isWide} />
-        <Metric label="Cash runway" value={`${(profile.cashSavings / Math.max(1, profile.monthlyExpenses)).toFixed(1)} mo.`} note={cashGap ? `${money(cashGap)} left to target` : 'Emergency reserve funded'} tone="gold" isWide={isWide} />
+        <Metric label="Cash runway" value={`${(num(profile.cashSavings) / Math.max(1, num(profile.monthlyExpenses))).toFixed(1)} mo.`} note={cashGap ? `${money(cashGap)} left to target` : 'Emergency reserve funded'} tone="gold" isWide={isWide} />
         <Metric label="Retirement rate" value={`${Math.round(retirementRate(profile) * 100)}%`} note={`Of ${money(grossHouseholdIncome(profile))} household income`} tone="green" isWide={isWide} />
       </View>
 
@@ -68,8 +85,8 @@ export default function DashboardScreen() {
           <Text style={styles.overall}>Overall {scores.overall}/100</Text>
         </View>
         <View style={styles.scoreGrid}>
-          <ScoreCard label="Cash health" value={scores.cash} insight={profile.cashSavings < emergencyFundTarget(profile) ? 'Build liquidity first' : 'Reserve looks stable'} />
-          <ScoreCard label="Debt risk" value={scores.debt} insight={profile.debtRate >= 7 ? 'APR drag is material' : 'Debt pressure manageable'} />
+          <ScoreCard label="Cash health" value={scores.cash} insight={num(profile.cashSavings) < emergencyFundTarget(profile) ? 'Build liquidity first' : 'Reserve looks stable'} />
+          <ScoreCard label="Debt risk" value={scores.debt} insight={num(profile.debtRate) >= 7 ? 'APR drag is material' : 'Debt pressure manageable'} />
           <ScoreCard label="Future wealth" value={scores.future} insight={retirementRate(profile) < 0.15 ? 'Savings rate needs lift' : 'Good retirement pace'} />
           <ScoreCard label="Housing readiness" value={scores.housing} insight="Stress tested against income" />
         </View>
@@ -119,7 +136,7 @@ export default function DashboardScreen() {
 
       <Card>
         <Text style={styles.cardTitle}>Top moves</Text>
-        {recs.map((r, idx) => (
+        {visibleRecs.map((r, idx) => (
           <View key={`${r.title}-${idx}`} style={styles.rec}>
             <View style={styles.recTop}>
               <Text style={[styles.priority, { color: priorityColor[r.priority] }]}>{r.priority}</Text>
@@ -131,16 +148,26 @@ export default function DashboardScreen() {
         ))}
       </Card>
 
-      <View style={styles.modulePreview}>
-        {modules.map(module => (
-          <Card key={module.id} style={[styles.moduleTile, !isWide && styles.moduleTileCompact]}>
-            <Text style={styles.moduleCategory}>{module.category}</Text>
-            <Text style={styles.moduleTitle}>{module.title}</Text>
-            <Text style={styles.moduleMetric}>{module.metric}</Text>
-            <Text style={styles.moduleText}>{module.nextMove}</Text>
-          </Card>
-        ))}
-      </View>
+      {!hasPremium ? (
+        <PaywallCard
+          compact
+          title="Unlock the full action plan"
+          subtitle="Open every recommendation, detailed module, weekly move, and shareable snapshot."
+          onUnlock={unlockPremium}
+          onRestore={restorePremium}
+        />
+      ) : (
+        <View style={styles.modulePreview}>
+          {modules.map(module => (
+            <Card key={module.id} style={[styles.moduleTile, !isWide && styles.moduleTileCompact]}>
+              <Text style={styles.moduleCategory}>{module.category}</Text>
+              <Text style={styles.moduleTitle}>{module.title}</Text>
+              <Text style={styles.moduleMetric}>{module.metric}</Text>
+              <Text style={styles.moduleText}>{module.nextMove}</Text>
+            </Card>
+          ))}
+        </View>
+      )}
     </ScrollView>
   );
 }

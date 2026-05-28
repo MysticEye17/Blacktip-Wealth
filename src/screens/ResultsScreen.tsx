@@ -1,12 +1,13 @@
 import React, { useCallback, useState } from 'react';
-import { ActivityIndicator, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, ScrollView, Share, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import Card from '../components/Card';
+import PaywallCard from '../components/PaywallCard';
 import SectionHeader from '../components/SectionHeader';
 import { ClientProfile, Goal, PlanningModule, Recommendation } from '../types';
 import { defaultGoals, defaultProfile } from '../utils/defaultData';
 import { buildPlanningModules, buildRecommendations, money, projectNetWorth, recommendedMonthlyPlan, riskAllocation } from '../utils/calculations';
-import { loadGoals, loadProfile } from '../utils/storage';
+import { loadGoals, loadPremiumAccess, loadProfile, savePremiumAccess } from '../utils/storage';
 import { explainWithAI } from '../utils/ai';
 import { theme } from '../utils/theme';
 
@@ -15,10 +16,12 @@ export default function ResultsScreen() {
   const [goals, setGoals] = useState<Goal[]>(defaultGoals);
   const [aiText, setAiText] = useState('');
   const [loading, setLoading] = useState(false);
+  const [hasPremium, setHasPremium] = useState(false);
 
   useFocusEffect(useCallback(() => {
     loadProfile().then(setProfile);
     loadGoals().then(setGoals);
+    loadPremiumAccess().then(setHasPremium);
   }, []));
 
   const recs = buildRecommendations(profile, goals);
@@ -35,6 +38,58 @@ export default function ResultsScreen() {
     try { setAiText(await explainWithAI(profile, goals, recs, modules, projection)); }
     catch { setAiText('The OpenAI analysis layer did not respond. The built-in calculation summary above is still available; check the backend proxy URL, API key, and server logs.'); }
     finally { setLoading(false); }
+  }
+
+  async function unlockPremium() {
+    await savePremiumAccess(true);
+    setHasPremium(true);
+  }
+
+  async function restorePremium() {
+    setHasPremium(await loadPremiumAccess());
+  }
+
+  async function sharePlanSnapshot() {
+    const text = [
+      'Blacktip Wealth Plan Snapshot',
+      '',
+      `Monthly surplus: ${money(plan.surplus)}`,
+      `10-year projection: ${money(ending.netWorth)}`,
+      `Strongest area: ${strongest?.title || 'N/A'}`,
+      `Needs attention: ${weakest?.title || 'N/A'}`,
+      `Top move: ${recs[0]?.action || 'Keep the plan current.'}`,
+      '',
+      'Educational only. Not tax, legal, investment, insurance, or financial advice.',
+    ].join('\n');
+
+    await Share.share({ title: 'Blacktip Wealth Plan Snapshot', message: text });
+  }
+
+  if (!hasPremium) {
+    return (
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <SectionHeader title="Analysis" subtitle="A full action plan with advisor-style interpretation, planning modules, weekly moves, and a shareable snapshot." />
+
+        <Card style={styles.previewCard}>
+          <Text style={styles.overline}>Preview</Text>
+          <Text style={styles.previewTitle}>Your top signal is ready</Text>
+          <Text style={styles.previewText}>
+            The plan currently prioritizes {recs[0]?.category.toLowerCase() || 'cash flow'} because that is where the next dollar can do the most work.
+          </Text>
+          <View style={styles.previewGrid}>
+            <Snapshot label="Monthly surplus" value={money(plan.surplus)} />
+            <Snapshot label="10-year estimate" value={money(ending.netWorth)} />
+          </View>
+        </Card>
+
+        <Card>
+          <Text style={styles.cardTitle}>Locked analysis</Text>
+          {recs.slice(0, 2).map((rec, idx) => <RecommendationRow key={`${rec.title}-${idx}`} rec={rec} />)}
+        </Card>
+
+        <PaywallCard onUnlock={unlockPremium} onRestore={restorePremium} />
+      </ScrollView>
+    );
   }
 
   return (
@@ -83,6 +138,10 @@ export default function ResultsScreen() {
         </View>
         {recs.slice(0, 6).map((rec, idx) => <RecommendationRow key={`${rec.title}-${idx}`} rec={rec} />)}
       </Card>
+
+      <TouchableOpacity style={styles.shareButton} onPress={sharePlanSnapshot}>
+        <Text style={styles.shareButtonText}>Share plan snapshot</Text>
+      </TouchableOpacity>
 
       <TouchableOpacity style={styles.button} onPress={getAiExplanation} disabled={loading}>
         {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Generate OpenAI-enhanced explanation</Text>}
@@ -149,6 +208,10 @@ const styles = StyleSheet.create({
   memoText: { color: '#D3DEE9', lineHeight: 23, marginBottom: 10 },
   memoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 12 },
   memoStat: { flexGrow: 1, flexBasis: '30%', minWidth: 150, backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 8, padding: 12 },
+  previewCard: { backgroundColor: theme.colors.deepBlue },
+  previewTitle: { color: '#FFFFFF', fontSize: 28, fontWeight: '900', lineHeight: 34, marginTop: 8, marginBottom: 10 },
+  previewText: { color: '#D3DEE9', lineHeight: 23, marginBottom: 14 },
+  previewGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   cardTitle: { fontSize: 19, color: theme.colors.secondary, fontWeight: '900', marginBottom: 12 },
   snapshotGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   snapshot: { flexGrow: 1, flexBasis: '46%', backgroundColor: theme.colors.panel, borderRadius: 8, padding: 12 },
@@ -168,4 +231,6 @@ const styles = StyleSheet.create({
   textBlock: { color: theme.colors.text, lineHeight: 23 },
   button: { backgroundColor: theme.colors.deepBlue, borderRadius: 8, padding: 16, alignItems: 'center', marginBottom: 16 },
   buttonText: { color: '#fff', fontWeight: '900' },
+  shareButton: { backgroundColor: theme.colors.primary, borderRadius: 8, padding: 16, alignItems: 'center', marginBottom: 12 },
+  shareButtonText: { color: '#FFFFFF', fontWeight: '900' },
 });

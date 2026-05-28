@@ -4,6 +4,7 @@ import { defaultGoals, defaultProfile } from './defaultData';
 
 const PROFILE_KEY = 'decision_engine_profile';
 const GOALS_KEY = 'decision_engine_goals';
+const PREMIUM_ACCESS_KEY = 'blacktip_premium_access';
 
 export async function loadProfile(): Promise<ClientProfile> {
   const raw = await AsyncStorage.getItem(PROFILE_KEY);
@@ -27,12 +28,25 @@ export async function loadGoals(): Promise<Goal[]> {
   return goals.map(goal => ({
     ...goal,
     type: goal.type || 'savings',
-    targetDate: goal.targetDate || dateFromYears(goal.years || 1),
+    targetDate: goal.targetDate || dateFromYears(goal.years ?? 1),
   }));
 }
 
 export async function saveGoals(goals: Goal[]) {
   await AsyncStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+}
+
+export async function loadPremiumAccess(): Promise<boolean> {
+  return (await AsyncStorage.getItem(PREMIUM_ACCESS_KEY)) === 'unlocked';
+}
+
+export async function savePremiumAccess(unlocked: boolean) {
+  if (unlocked) {
+    await AsyncStorage.setItem(PREMIUM_ACCESS_KEY, 'unlocked');
+    return;
+  }
+
+  await AsyncStorage.removeItem(PREMIUM_ACCESS_KEY);
 }
 
 function dateFromYears(years: number) {
