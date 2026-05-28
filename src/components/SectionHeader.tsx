@@ -12,7 +12,7 @@ export default function SectionHeader({ title, subtitle }: { title: string; subt
 }
 
 const styles = StyleSheet.create({
-  wrap: { marginBottom: 14 },
-  title: { fontSize: 26, fontWeight: '900', color: theme.colors.secondary },
-  subtitle: { fontSize: 14, color: theme.colors.muted, marginTop: 4, lineHeight: 20 },
+  wrap: { marginBottom: 18 },
+  title: { fontSize: 28, fontWeight: '900', color: theme.colors.secondary, lineHeight: 34 },
+  subtitle: { fontSize: 15, color: theme.colors.muted, marginTop: 6, lineHeight: 22, maxWidth: 780 },
 });

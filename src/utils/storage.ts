@@ -7,7 +7,14 @@ const GOALS_KEY = 'decision_engine_goals';
 
 export async function loadProfile(): Promise<ClientProfile> {
   const raw = await AsyncStorage.getItem(PROFILE_KEY);
-  return raw ? JSON.parse(raw) : defaultProfile;
+  const profile = raw ? { ...defaultProfile, ...JSON.parse(raw) } : defaultProfile;
+  return {
+    ...profile,
+    hasHealthInsurance: profile.healthInsurance !== 'none',
+    hasLifeInsurance: profile.lifeInsurance !== 'none',
+    hasDisabilityInsurance: profile.disabilityInsurance !== 'none',
+    hasAutoInsurance: profile.autoInsurance !== 'none',
+  };
 }
 
 export async function saveProfile(profile: ClientProfile) {
@@ -16,9 +23,20 @@ export async function saveProfile(profile: ClientProfile) {
 
 export async function loadGoals(): Promise<Goal[]> {
   const raw = await AsyncStorage.getItem(GOALS_KEY);
-  return raw ? JSON.parse(raw) : defaultGoals;
+  const goals: Goal[] = raw ? JSON.parse(raw) : defaultGoals;
+  return goals.map(goal => ({
+    ...goal,
+    type: goal.type || 'savings',
+    targetDate: goal.targetDate || dateFromYears(goal.years || 1),
+  }));
 }
 
 export async function saveGoals(goals: Goal[]) {
   await AsyncStorage.setItem(GOALS_KEY, JSON.stringify(goals));
+}
+
+function dateFromYears(years: number) {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() + Math.max(1, years));
+  return date.toISOString().slice(0, 10);
 }

@@ -14,14 +14,14 @@ const styles = StyleSheet.create({
   pill: {
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: 999,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: theme.colors.border,
     backgroundColor: '#FFFFFF',
     marginRight: 8,
     marginBottom: 8,
   },
-  active: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  active: { backgroundColor: theme.colors.deepBlue, borderColor: theme.colors.deepBlue },
   text: { color: theme.colors.text, fontWeight: '700' },
   activeText: { color: '#FFFFFF' },
 });
